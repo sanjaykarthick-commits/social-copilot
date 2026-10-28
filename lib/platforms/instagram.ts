@@ -5,6 +5,7 @@ import { REPLY_WINDOW_CLOSED } from "@/lib/validation/messages";
 import {
   PlatformError,
   type AccountProfile,
+  type CollaboratorStatus,
   type AdapterAccount,
   type PlatformAdapter,
   type PlatformComment,
@@ -44,6 +45,8 @@ import {
  *               `collaborators` (JSON array of up to 3 usernames) goes on the image, reel or carousel parent
  *               container, never on carousel children; each invitee must accept before it shows on their profile.
  *   comments    GET /<media>/comments, POST /<comment>/replies { message }
+ *   delete      DELETE /<media> (not yet run live; Meta's answer is shown if it refuses)
+ *   collab      GET /<media>/collaborators -> [{ id, username, invite_status: Accepted | Pending | Declined }]
  *   messages    GET /<IG_ID>/conversations?platform=instagram (verified live on graph.facebook.com with the
  *               unified-login token, Oct 2026; /me/conversations answers #298 there), then each thread's
  *               messages{id,created_time,from,to,message}. Reply: POST /<IG_ID>/messages
@@ -110,7 +113,7 @@ export function igError(res: Response, body: unknown, context: string): Platform
 }
 
 async function graph<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   c: Conn,
   params: Record<string, string>,
@@ -119,8 +122,8 @@ async function graph<T>(
 ): Promise<T> {
   const query = new URLSearchParams({ ...params, access_token: c.token });
   const res =
-    method === "GET"
-      ? await safeFetch(`${base}${path}?${query}`)
+    method !== "POST"
+      ? await safeFetch(`${base}${path}?${query}`, method === "DELETE" ? { method: "DELETE" } : undefined)
       : await safeFetch(`${base}${path}`, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -689,6 +692,29 @@ export const instagramAdapter: PlatformAdapter = {
     const r = await graph<{ id?: string }>("POST", `/${comment.platformCommentId}/replies`, connOf(account), { message: text }, "Replying on Instagram");
     if (!r.id) throw new PlatformError("Instagram accepted the reply but returned no id.", "api", false);
     return { platformReplyId: r.id };
+  },
+
+  async deletePost(account, platformPostId) {
+    // Meta answers "does not exist, cannot be loaded due to missing permissions" both for a post that is already
+    // gone and for one we may not touch, so that error is reported, never taken as success.
+    const r = await graph<{ success?: boolean }>("DELETE", `/${platformPostId}`, connOf(account), {}, "Deleting the post on Instagram");
+    if (r.success === false) throw new PlatformError("Instagram did not delete the post.", "api", false);
+  },
+
+  async fetchCollaborators(account, platformPostId) {
+    const r = await graph<{ data?: { id?: string; username?: string; invite_status?: string }[] }>(
+      "GET",
+      `/${platformPostId}/collaborators`,
+      connOf(account),
+      { fields: "id,username,invite_status" },
+      "Reading the post's collaborators",
+    );
+    return (r.data ?? []).map((c): CollaboratorStatus => {
+      const s = (c.invite_status ?? "").toLowerCase();
+      // Meta's own example spells it "Accpeted": match on the start of the word.
+      const status = s.startsWith("acc") ? "accepted" : s.startsWith("pend") ? "pending" : s.startsWith("decl") ? "declined" : "unknown";
+      return { username: (c.username ?? "").toLowerCase(), status };
+    });
   },
 
   /** The 25 most recently active conversations; only those with activity since `since` are returned. */

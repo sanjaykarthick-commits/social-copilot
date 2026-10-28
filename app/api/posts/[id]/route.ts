@@ -41,9 +41,10 @@ export const PATCH = handle<Ctx>(async (req, ctx) => {
   return Response.json({ post: await reschedulePost({ userId: user.id, plan }, id, new Date(scheduledAt)) });
 });
 
-export const DELETE = handle<Ctx>(async (_req, ctx) => {
+/** `?fromPlatforms=1` also deletes the published copies on platforms that allow it (Instagram). */
+export const DELETE = handle<Ctx>(async (req, ctx) => {
   const id = await ctxId(ctx);
   const { user, plan } = await requireUser();
-  await deletePost({ userId: user.id, plan }, id);
+  await deletePost({ userId: user.id, plan }, id, { fromPlatforms: new URL(req.url).searchParams.get("fromPlatforms") === "1" });
   return Response.json({ ok: true });
 });

@@ -623,3 +623,53 @@ describe("Instagram adapter: direct messages", () => {
     expect(instagramAdapter.capabilities!({ scopes: null }).messages).toBe(false);
   });
 });
+
+describe("Instagram adapter: deleting a post and reading collaborator invites", () => {
+  const FB = "https://graph.facebook.com/v26.0";
+  const fbAccount: AdapterAccount = { ...account, metadata: { graph: "facebook" } };
+
+  it("deletes with DELETE /<media-id> on the account's host", async () => {
+    const { requests } = installFakeFetch([(r) => (r.method === "DELETE" && r.url.startsWith(`${FB}/M1?`) ? json({ success: true }) : undefined)]);
+    await instagramAdapter.deletePost!(fbAccount, "M1");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("DELETE");
+    expect(new URL(requests[0].url).searchParams.get("access_token")).toBe("IGLONG");
+  });
+
+  it("reports Meta's refusal, including the ambiguous 'does not exist / missing permissions' one", async () => {
+    installFakeFetch([
+      () =>
+        json(
+          { error: { message: "Unsupported delete request. Object with ID 'M1' does not exist, cannot be loaded due to missing permissions, or does not support this operation.", code: 100, error_subcode: 33 } },
+          400,
+        ),
+    ]);
+    await expect(instagramAdapter.deletePost!(fbAccount, "M1")).rejects.toMatchObject({ kind: "api", message: expect.stringContaining("does not exist") });
+    installFakeFetch([() => json({ success: false })]);
+    await expect(instagramAdapter.deletePost!(fbAccount, "M1")).rejects.toMatchObject({ message: "Instagram did not delete the post." });
+  });
+
+  it("reads invites from /<media-id>/collaborators, tolerating Meta's 'Accpeted' spelling", async () => {
+    const { requests } = installFakeFetch([
+      () =>
+        json({
+          data: [
+            { id: "1", username: "Ben_K", invite_status: "Accpeted" },
+            { id: "2", username: "cara.co", invite_status: "Pending" },
+            { id: "3", username: "dev", invite_status: "Declined" },
+            { id: "4", username: "odd", invite_status: "Something new" },
+          ],
+        }),
+    ]);
+    const out = await instagramAdapter.fetchCollaborators!(fbAccount, "M1");
+    const u = new URL(requests[0].url);
+    expect(u.origin + u.pathname).toBe(`${FB}/M1/collaborators`);
+    expect(u.searchParams.get("fields")).toBe("id,username,invite_status");
+    expect(out).toEqual([
+      { username: "ben_k", status: "accepted" },
+      { username: "cara.co", status: "pending" },
+      { username: "dev", status: "declined" },
+      { username: "odd", status: "unknown" },
+    ]);
+  });
+});

@@ -14,8 +14,8 @@ export async function publishNow(id: string) {
   return res.post;
 }
 
-export async function deletePostById(id: string) {
-  await api(`/api/posts/${id}`, { method: "DELETE" });
+export async function deletePostById(id: string, opts: { fromPlatforms?: boolean } = {}) {
+  await api(`/api/posts/${id}${opts.fromPlatforms ? "?fromPlatforms=1" : ""}`, { method: "DELETE" });
   await refreshPosts();
 }
 

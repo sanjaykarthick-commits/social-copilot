@@ -26,6 +26,9 @@ See `components/posts/status.tsx`.
 ## Patterns
 - Page = `PageHeader` + content, `max-w-6xl` (calendar/dashboard) or narrower for forms.
 - Lists open a **drawer** (`PostDrawer`) for details and actions; destructive actions confirm with an `AlertDialog`.
+  Deleting a published post removes it from Social Copilot only, unless the user ticks "Also delete it on Instagram"
+  (off by default; platforms with `deletesPosts` in `lib/platforms/meta.ts`). If the platform refuses, nothing is
+  deleted here. The drawer shows each collaborator's invite status as Instagram reports it.
 - Phones: the sidebar becomes a sheet; the composer's actions pin to the bottom; the month calendar shows one **dot per post**
   (text chips do not fit in a 50px cell) and tapping a day opens the day view.
 - Every list page has an empty state with a call to action.

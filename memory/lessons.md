@@ -2,6 +2,9 @@
 
 Format: `YYYY-MM-DD | symptom | cause | fix | evidence`. Newest first.
 
+2026-10-28 | /dashboard/posts reloaded endlessly in `next dev` | dev server started while files were being stashed/restored nearby; HMR kept recompiling (not an app bug: 2 navigations/15s on a fresh server, with and without the change) | restart the dev server after git stash/checkout; measure reloads with Playwright `framenavigated` before blaming code | session
+2026-10-28 | Collaborator invite never arrived (post published, invitee public) | unknown: we did not read back what Instagram recorded | the post drawer now asks GET /<media>/collaborators and shows each invite's status | lib/posts.ts postCollaborators
+
 2026-10-28 | Uncommitted schema changes vanished during a mutation test | `git checkout <file>` restores the last COMMIT, not the pre-mutation copy | back up with cp and restore from the copy; commit before mutation-testing | session, lib/db/schema.ts
 2026-10-28 | DM sync fallback read messages for idle threads | the `since` filter ran after the per-thread reads | filter threads by updated_time before reading their messages | tests/instagram-adapter.test.ts "falls back to each thread's messages edge"
 

@@ -2,6 +2,8 @@
 
 Format: `YYYY-MM-DD | decision | reason | alternatives rejected`. Newest first.
 
+2026-10-28 | "Also delete on Instagram" is opt-in per delete, platform first; any refusal keeps the post in Social Copilot; Meta's ambiguous "does not exist / missing permissions" is reported, never treated as success | deleting on Instagram cannot be undone; a post must never vanish here while still live there | auto-delete everywhere; swallowing "does not exist"
+
 2026-10-28 | Instagram DMs read via GET /<ig-user-id>/conversations?platform=instagram on the stored host; replies POST /<ig-user-id>/messages | live probe: /me/conversations is 403 (#298) and graph.instagram.com rejects the unified-login token | /me/* edges
 2026-10-28 | DMs: poll (cron 15 min + on opening the tab, 60s cooldown), no webhooks in v1; 24h window enforced in UI and API from the person's last message only; one idempotency key per draft so a double click sends once | webhooks need app review + public subscription; Meta rejects sends outside the window | queueing sends
 2026-10-28 | Messages capability only when instagram_(business_)manage_messages is in the stored scopes (unknown = no) | rule 13: never claim what was not granted | assuming granted like comments
