@@ -50,7 +50,7 @@ describe.skipIf(!hasDb)("social accounts", () => {
   });
 
   it("never exposes tokens through the public shape", () => {
-    const pub = toPublicAccount({ id: "x", userId, platform: "twitter", platformAccountId: "1", username: "a", displayName: "A", profileImageUrl: null, accessToken: "enc", refreshToken: "enc", tokenExpiresAt: null, scopes: null, status: "connected", lastCommentSyncAt: null, metadata: {}, createdAt: new Date(), updatedAt: new Date() });
+    const pub = toPublicAccount({ id: "x", userId, platform: "twitter", platformAccountId: "1", username: "a", displayName: "A", profileImageUrl: null, accessToken: "enc", refreshToken: "enc", tokenExpiresAt: null, scopes: null, status: "connected", lastCommentSyncAt: null, lastMessageSyncAt: null, metadata: {}, createdAt: new Date(), updatedAt: new Date() });
     expect(JSON.stringify(pub)).not.toContain("enc");
     expect(Object.keys(pub)).not.toContain("accessToken");
   });

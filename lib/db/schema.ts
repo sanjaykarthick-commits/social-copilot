@@ -103,6 +103,8 @@ export const socialAccounts = pgTable(
     status: text("status").notNull().default("connected"),
     /** Cursor for the comment monitor: only look at comments newer than this. */
     lastCommentSyncAt: ts("last_comment_sync_at"),
+    /** Cursor for the message monitor (Instagram DMs). */
+    lastMessageSyncAt: ts("last_message_sync_at"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -333,6 +335,69 @@ export const commentReplies = pgTable(
   (t) => [uniqueIndex("comment_replies_idempotency_idx").on(t.userId, t.idempotencyKey), index("comment_replies_comment_idx").on(t.commentId)],
 );
 
+/** Direct-message conversations (Instagram DMs), one per person per connected account. Synced by polling. */
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    socialAccountId: uuid("social_account_id")
+      .notNull()
+      .references(() => socialAccounts.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    platformConversationId: text("platform_conversation_id").notNull(),
+    /** The other person's platform-scoped id: replies are addressed to it. */
+    participantId: text("participant_id").notNull(),
+    participantHandle: text("participant_handle"),
+    participantName: text("participant_name"),
+    participantImageUrl: text("participant_image_url"),
+    lastMessageText: text("last_message_text"),
+    lastMessageAt: ts("last_message_at"),
+    lastMessageFromMe: boolean("last_message_from_me").notNull().default(false),
+    /** The other person's latest message. Instagram allows replies until 24 hours after it. */
+    lastInboundAt: ts("last_inbound_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("conversations_account_conversation_idx").on(t.socialAccountId, t.platformConversationId),
+    index("conversations_user_last_idx").on(t.userId, t.lastMessageAt),
+  ],
+);
+
+export const directMessages = pgTable(
+  "direct_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Null until the platform confirms a message we send. */
+    platformMessageId: text("platform_message_id"),
+    /** inbound (from them) | outbound (from the account owner) */
+    direction: text("direction").notNull(),
+    text: text("text").notNull().default(""),
+    sentAt: ts("sent_at").notNull(),
+    /** received | sending | sent | failed */
+    status: text("status").notNull(),
+    error: text("error"),
+    /** Sent by the browser per send attempt (outbound only): a double click or a retried request never sends twice. */
+    idempotencyKey: text("idempotency_key"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("direct_messages_conversation_message_idx").on(t.conversationId, t.platformMessageId),
+    uniqueIndex("direct_messages_idempotency_idx").on(t.userId, t.idempotencyKey),
+    index("direct_messages_conversation_sent_idx").on(t.conversationId, t.sentAt),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
 export type DbSubscription = typeof subscriptions.$inferSelect;
 export type SocialAccount = typeof socialAccounts.$inferSelect;
@@ -344,3 +409,5 @@ export type ReplyLog = typeof replyLogs.$inferSelect;
 export type PostMetric = typeof postMetrics.$inferSelect;
 export type DbComment = typeof comments.$inferSelect;
 export type CommentReply = typeof commentReplies.$inferSelect;
+export type DbConversation = typeof conversations.$inferSelect;
+export type DirectMessage = typeof directMessages.$inferSelect;

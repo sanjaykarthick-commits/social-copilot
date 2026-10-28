@@ -1,12 +1,15 @@
 import { getEnv, isConfigured, requireEnv } from "@/lib/env";
 import { errorFromResponse, readBody, safeFetch } from "@/lib/platforms/http";
 import { withTransform } from "@/lib/platforms/media-io";
+import { REPLY_WINDOW_CLOSED } from "@/lib/validation/messages";
 import {
   PlatformError,
   type AccountProfile,
   type AdapterAccount,
   type PlatformAdapter,
   type PlatformComment,
+  type PlatformConversation,
+  type PlatformMessage,
   type PostMetrics,
   type PublishInput,
   type PublishMedia,
@@ -41,6 +44,11 @@ import {
  *               `collaborators` (JSON array of up to 3 usernames) goes on the image, reel or carousel parent
  *               container, never on carousel children; each invitee must accept before it shows on their profile.
  *   comments    GET /<media>/comments, POST /<comment>/replies { message }
+ *   messages    GET /<IG_ID>/conversations?platform=instagram (verified live on graph.facebook.com with the
+ *               unified-login token, Oct 2026; /me/conversations answers #298 there), then each thread's
+ *               messages{id,created_time,from,to,message}. Reply: POST /<IG_ID>/messages
+ *               { recipient: {"id": IGSID}, message: {"text": ...} } (not yet run live). Only within 24 hours
+ *               of the person's last message, and a business can never start a conversation.
  * Images must be JPEG: ImageKit converts on the fly (tr=f-jpg). `caption` cannot be read back
  * with Instagram Login (Facebook Login only), so the inbox shows our own text for our posts.
  */
@@ -87,6 +95,10 @@ export function igError(res: Response, body: unknown, context: string): Platform
   if (!e || typeof e !== "object") return errorFromResponse(res, body, context);
   const msg = (e.error_user_msg || e.message || `failed (${res.status})`).slice(0, 400);
   if (e.code === 190 || res.status === 401) return new PlatformError(`${context}: ${msg} Reconnect the account.`, "auth", false, res.status);
+  // A message sent outside the 24-hour window (Meta checks again even though we check first).
+  if (e.error_subcode === 2534022) return new PlatformError(REPLY_WINDOW_CLOSED, "validation", false, res.status);
+  // The person blocked the account, deleted theirs, or restricts messages.
+  if (e.code === 551 || e.error_subcode === 1545041) return new PlatformError(`${context}: this person isn't available on Instagram right now.`, "validation", false, res.status);
   if (e.error_subcode === 2207042) {
     return new PlatformError("Instagram's publishing limit for this account was reached (posts per 24 hours). Try again later.", "rate_limit", false, res.status);
   }
@@ -438,6 +450,57 @@ async function commentsOf(c: Conn, mediaId: string): Promise<IgComment[]> {
   }
 }
 
+type IgParty = { id?: string; username?: string; name?: string };
+type IgMessage = { id: string; created_time?: string; from?: IgParty; to?: { data?: IgParty[] }; message?: string };
+type IgConversation = { id: string; updated_time?: string; participants?: { data?: IgParty[] }; messages?: { data?: IgMessage[] } };
+
+/** Messages kept per conversation on each sync: Meta only returns details for the 20 most recent. */
+const DM_PAGE = 20;
+const MESSAGE_FIELDS = "id,created_time,from,to,message";
+
+const isMe = (account: Pick<AdapterAccount, "platformAccountId" | "username">, p: IgParty | undefined) =>
+  Boolean(p && (p.id === account.platformAccountId || (account.username && p.username?.toLowerCase() === account.username.toLowerCase())));
+
+/** Threads active since `since`, with their latest messages. */
+async function listConversations(c: Conn, igId: string, since: Date): Promise<IgConversation[]> {
+  const active = (t: IgConversation) => !t.updated_time || new Date(t.updated_time) >= since;
+  const list = (fields: string) =>
+    graph<{ data?: IgConversation[] }>("GET", `/${igId}/conversations`, c, { platform: "instagram", fields, limit: "25" }, "Reading Instagram messages");
+  try {
+    return ((await list(`id,updated_time,participants,messages.limit(${DM_PAGE}){${MESSAGE_FIELDS}}`)).data ?? []).filter(active);
+  } catch (e) {
+    // Nested field expansion is not accepted everywhere: list the threads, then read each one's messages edge.
+    if (!(e instanceof PlatformError) || e.kind !== "api" || e.retryable) throw e;
+    const threads = ((await list("id,updated_time,participants")).data ?? []).filter(active);
+    for (const t of threads) {
+      const r = await graph<{ data?: IgMessage[] }>("GET", `/${t.id}/messages`, c, { fields: MESSAGE_FIELDS, limit: String(DM_PAGE) }, "Reading Instagram messages");
+      t.messages = { data: r.data ?? [] };
+    }
+    return threads;
+  }
+}
+
+function toConversation(account: AdapterAccount, t: IgConversation): PlatformConversation | null {
+  const msgs = t.messages?.data ?? [];
+  const other =
+    (t.participants?.data ?? []).find((p) => !isMe(account, p)) ??
+    msgs.map((m) => (isMe(account, m.from) ? m.to?.data?.find((p) => !isMe(account, p)) : m.from)).find((p) => p?.id);
+  if (!other?.id) return null; // nobody to reply to (e.g. a thread with only our own messages and no recipient data)
+  const messages: PlatformMessage[] = msgs.map((m) => ({
+    platformMessageId: m.id,
+    fromMe: isMe(account, m.from),
+    text: m.message ?? "",
+    sentAt: m.created_time ? new Date(m.created_time) : new Date(0),
+  }));
+  const newest = messages.reduce((d, m) => (m.sentAt > d ? m.sentAt : d), new Date(0));
+  return {
+    platformConversationId: t.id,
+    participant: { id: other.id, handle: other.username ?? null, name: other.name ?? null, imageUrl: null },
+    updatedAt: t.updated_time ? new Date(t.updated_time) : newest,
+    messages,
+  };
+}
+
 export const instagramAdapter: PlatformAdapter = {
   platform: "instagram",
   implemented: true,
@@ -546,10 +609,14 @@ export const instagramAdapter: PlatformAdapter = {
   capabilities(account) {
     // Instagram Login grants instagram_business_manage_comments; Facebook Login grants instagram_manage_comments.
     const comments = !account.scopes || /instagram_(business_)?manage_comments/.test(account.scopes);
+    // Messages are only claimed when the permission is known to be granted (never assumed).
+    const messages = Boolean(account.scopes && /instagram_(business_)?manage_messages/.test(account.scopes));
     return {
       metrics: true,
       comments,
       note: comments ? undefined : "Reconnect and allow comment access to see and reply to comments.",
+      messages,
+      messagesNote: messages ? undefined : "Reconnect and allow message access to see and answer Instagram messages.",
     };
   },
 
@@ -622,5 +689,25 @@ export const instagramAdapter: PlatformAdapter = {
     const r = await graph<{ id?: string }>("POST", `/${comment.platformCommentId}/replies`, connOf(account), { message: text }, "Replying on Instagram");
     if (!r.id) throw new PlatformError("Instagram accepted the reply but returned no id.", "api", false);
     return { platformReplyId: r.id };
+  },
+
+  /** The 25 most recently active conversations; only those with activity since `since` are returned. */
+  async fetchConversations(account, { since }) {
+    const threads = await listConversations(connOf(account), account.platformAccountId, since);
+    return threads
+      .map((t) => toConversation(account, t))
+      .filter((t): t is PlatformConversation => t !== null && t.updatedAt >= since);
+  },
+
+  async sendMessage(account, conversation, text) {
+    const r = await graph<{ recipient_id?: string; message_id?: string }>(
+      "POST",
+      `/${account.platformAccountId}/messages`,
+      connOf(account),
+      { recipient: JSON.stringify({ id: conversation.participantId }), message: JSON.stringify({ text }) },
+      "Sending the Instagram message",
+    );
+    if (!r.message_id) throw new PlatformError("Instagram accepted the message but returned no id.", "api", false);
+    return { platformMessageId: r.message_id };
   },
 };
