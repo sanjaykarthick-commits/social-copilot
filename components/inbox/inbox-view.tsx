@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { Archive, ArrowUpRight, ChevronLeft, ChevronRight, Inbox, Info, MessageCircle, RefreshCw, Reply, Undo2 } from "lucide-react";
+import { Archive, ArrowUpRight, ChevronLeft, ChevronRight, Inbox, Info, MessageCircle, MessagesSquare, RefreshCw, Reply, Undo2 } from "lucide-react";
 import { toast } from "sonner";
+import { CONVERSATIONS_KEY, MessagesView, type ConversationsResponse } from "@/components/inbox/messages-view";
 import { PageHeader } from "@/components/page-header";
 import { PlatformGlyph } from "@/components/platform-icon";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -49,6 +50,8 @@ const POST_NOUN: Partial<Record<Platform, string>> = { youtube: "YouTube video",
 export function InboxView() {
   const { tz } = useTimezone();
   const now = useNow(60_000);
+  const [section, setSection] = useState<"comments" | "messages">("comments");
+  const { data: dms } = useSWR<ConversationsResponse>(CONVERSATIONS_KEY, fetcher, { refreshInterval: 60_000 });
   const [tab, setTab] = useState<Tab>("open");
   const [platform, setPlatform] = useState("");
   const [page, setPage] = useState(1);
@@ -107,146 +110,168 @@ export function InboxView() {
     <div className="mx-auto w-full max-w-4xl space-y-5">
       <PageHeader
         title="Inbox"
-        description="Comments on your Instagram, YouTube and LinkedIn posts. Reply without leaving Social Copilot."
+        description="Comments on your Instagram, YouTube and LinkedIn posts, and your Instagram messages. Reply without leaving Social Copilot."
         actions={
-          <Button variant="outline" className="h-9 rounded-lg" onClick={() => sync()} disabled={syncing}>
-            <RefreshCw className={cn(syncing && "animate-spin")} aria-hidden /> {syncing ? "Checking…" : "Sync now"}
-          </Button>
+          section === "comments" && (
+            <Button variant="outline" className="h-9 rounded-lg" onClick={() => sync()} disabled={syncing}>
+              <RefreshCw className={cn(syncing && "animate-spin")} aria-hidden /> {syncing ? "Checking…" : "Sync now"}
+            </Button>
+          )
         }
       />
 
-      {limited.length > 0 && (
-        <Card className="bg-muted/40">
-          <CardContent className="space-y-2 text-sm">
-            {limited.map((a) => (
-              <p key={a.id} className="flex items-start gap-2">
-                <Info className="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden />
-                <span className="flex-1">
-                  <span className="font-medium">{PLATFORM_META[a.platform].name}</span> ({a.username ? `@${a.username}` : (a.displayName ?? "account")}): {a.capabilities.note ?? "comments are not available for this connection."}
-                </span>
-                {a.platform !== "linkedin" && (
-                  <a href={`/api/oauth/${a.platform}/start?reconnect=${a.id}`} className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}>
-                    Reconnect
-                  </a>
-                )}
-              </p>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      <Tabs value={section} onValueChange={(v) => setSection(v as typeof section)}>
+        <TabsList className="group-data-horizontal/tabs:h-auto">
+          <TabsTrigger value="comments" className="gap-1.5 px-3 py-1">
+            <MessageCircle aria-hidden /> Comments
+            {counts && counts.open > 0 && <span className="bg-primary text-primary-foreground rounded-full px-1.5 text-[11px] tabular-nums">{counts.open}</span>}
+          </TabsTrigger>
+          <TabsTrigger value="messages" className="gap-1.5 px-3 py-1">
+            <MessagesSquare aria-hidden /> Messages
+            {dms && dms.awaiting > 0 && <span className="bg-primary text-primary-foreground rounded-full px-1.5 text-[11px] tabular-nums">{dms.awaiting}</span>}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Tabs
-          value={tab}
-          onValueChange={(v) => {
-            setTab(v as Tab);
-            setPage(1);
-          }}
-        >
-          <TabsList className="grid w-full grid-cols-2 group-data-horizontal/tabs:h-auto sm:flex sm:w-fit">
-            {TABS.map((t) => (
-              <TabsTrigger key={t.value} value={t.value} className="gap-1.5 px-3 py-1">
-                {t.label}
-                {t.value !== "all" && counts && counts[t.value] > 0 && (
-                  <span className={cn("rounded-full px-1.5 text-[11px] tabular-nums", t.value === "open" ? "bg-primary text-primary-foreground" : "bg-muted-foreground/15")}>
-                    {counts[t.value]}
-                  </span>
-                )}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-        <NativeSelect
-          aria-label="Filter by platform"
-          value={platform}
-          onChange={(e) => {
-            setPlatform(e.target.value);
-            setPage(1);
-          }}
-        >
-          <NativeSelectOption value="">All platforms</NativeSelectOption>
-          {COMMENT_PLATFORMS.map((p) => (
-            <NativeSelectOption key={p} value={p}>
-              {PLATFORM_META[p].name}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </div>
-
-      {error && (
-        <div role="alert" className="border-destructive/40 flex items-center gap-3 rounded-xl border p-3 text-sm">
-          <span className="flex-1">{errorMessage(error)}</span>
-          <Button variant="outline" size="sm" onClick={() => mutate()}>
-            Retry
-          </Button>
-        </div>
-      )}
-
-      {isLoading && !data && (
-        <div className="space-y-3">
-          {Array.from({ length: 4 }, (_, i) => (
-            <Skeleton key={i} className="h-32 rounded-2xl" />
-          ))}
-        </div>
-      )}
-
-      {data && data.comments.length === 0 && (
-        <Empty className="border border-dashed">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Inbox aria-hidden />
-            </EmptyMedia>
-            {accountsData && commentAccounts.length === 0 ? (
-              <>
-                <EmptyTitle>Connect an account to see comments</EmptyTitle>
-                <EmptyDescription>Comments from Instagram, YouTube and LinkedIn show up here, and you can reply right away.</EmptyDescription>
-              </>
-            ) : tab === "open" && !platform ? (
-              <>
-                <EmptyTitle>You&apos;re all caught up</EmptyTitle>
-                <EmptyDescription>New comments arrive every 15 minutes, or press Sync now.</EmptyDescription>
-              </>
-            ) : (
-              <>
-                <EmptyTitle>Nothing here</EmptyTitle>
-                <EmptyDescription>No comments match this view.</EmptyDescription>
-              </>
-            )}
-          </EmptyHeader>
-          {accountsData && commentAccounts.length === 0 && (
-            <EmptyContent>
-              <Link href="/dashboard/accounts" className={cn(buttonVariants({ variant: "brand" }), "h-9 rounded-lg px-3")}>
-                Connect accounts
-              </Link>
-            </EmptyContent>
-          )}
-        </Empty>
-      )}
-
-      {data && data.comments.length > 0 && (
+      {section === "messages" ? (
+        <MessagesView />
+      ) : (
         <>
-          <ul className="space-y-3">
-            {data.comments.map((c) => (
-              <CommentCard key={c.id} comment={c} now={now} tz={tz} onChange={replace} />
-            ))}
-          </ul>
-          {pages > 1 && (
-            <div className="text-muted-foreground flex items-center justify-between text-sm">
-              <span>
-                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
-              </span>
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <ChevronLeft aria-hidden />
-                </Button>
-                <span className="px-2 tabular-nums">
-                  {page} / {pages}
-                </span>
-                <Button variant="outline" size="icon" aria-label="Next page" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  <ChevronRight aria-hidden />
-                </Button>
-              </div>
+
+          {limited.length > 0 && (
+            <Card className="bg-muted/40">
+              <CardContent className="space-y-2 text-sm">
+                {limited.map((a) => (
+                  <p key={a.id} className="flex items-start gap-2">
+                    <Info className="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden />
+                    <span className="flex-1">
+                      <span className="font-medium">{PLATFORM_META[a.platform].name}</span> ({a.username ? `@${a.username}` : (a.displayName ?? "account")}): {a.capabilities.note ?? "comments are not available for this connection."}
+                    </span>
+                    {a.platform !== "linkedin" && (
+                      <a href={`/api/oauth/${a.platform}/start?reconnect=${a.id}`} className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}>
+                        Reconnect
+                      </a>
+                    )}
+                  </p>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Tabs
+              value={tab}
+              onValueChange={(v) => {
+                setTab(v as Tab);
+                setPage(1);
+              }}
+            >
+              <TabsList className="grid w-full grid-cols-2 group-data-horizontal/tabs:h-auto sm:flex sm:w-fit">
+                {TABS.map((t) => (
+                  <TabsTrigger key={t.value} value={t.value} className="gap-1.5 px-3 py-1">
+                    {t.label}
+                    {t.value !== "all" && counts && counts[t.value] > 0 && (
+                      <span className={cn("rounded-full px-1.5 text-[11px] tabular-nums", t.value === "open" ? "bg-primary text-primary-foreground" : "bg-muted-foreground/15")}>
+                        {counts[t.value]}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <NativeSelect
+              aria-label="Filter by platform"
+              value={platform}
+              onChange={(e) => {
+                setPlatform(e.target.value);
+                setPage(1);
+              }}
+            >
+              <NativeSelectOption value="">All platforms</NativeSelectOption>
+              {COMMENT_PLATFORMS.map((p) => (
+                <NativeSelectOption key={p} value={p}>
+                  {PLATFORM_META[p].name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+
+          {error && (
+            <div role="alert" className="border-destructive/40 flex items-center gap-3 rounded-xl border p-3 text-sm">
+              <span className="flex-1">{errorMessage(error)}</span>
+              <Button variant="outline" size="sm" onClick={() => mutate()}>
+                Retry
+              </Button>
             </div>
+          )}
+
+          {isLoading && !data && (
+            <div className="space-y-3">
+              {Array.from({ length: 4 }, (_, i) => (
+                <Skeleton key={i} className="h-32 rounded-2xl" />
+              ))}
+            </div>
+          )}
+
+          {data && data.comments.length === 0 && (
+            <Empty className="border border-dashed">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Inbox aria-hidden />
+                </EmptyMedia>
+                {accountsData && commentAccounts.length === 0 ? (
+                  <>
+                    <EmptyTitle>Connect an account to see comments</EmptyTitle>
+                    <EmptyDescription>Comments from Instagram, YouTube and LinkedIn show up here, and you can reply right away.</EmptyDescription>
+                  </>
+                ) : tab === "open" && !platform ? (
+                  <>
+                    <EmptyTitle>You&apos;re all caught up</EmptyTitle>
+                    <EmptyDescription>New comments arrive every 15 minutes, or press Sync now.</EmptyDescription>
+                  </>
+                ) : (
+                  <>
+                    <EmptyTitle>Nothing here</EmptyTitle>
+                    <EmptyDescription>No comments match this view.</EmptyDescription>
+                  </>
+                )}
+              </EmptyHeader>
+              {accountsData && commentAccounts.length === 0 && (
+                <EmptyContent>
+                  <Link href="/dashboard/accounts" className={cn(buttonVariants({ variant: "brand" }), "h-9 rounded-lg px-3")}>
+                    Connect accounts
+                  </Link>
+                </EmptyContent>
+              )}
+            </Empty>
+          )}
+
+          {data && data.comments.length > 0 && (
+            <>
+              <ul className="space-y-3">
+                {data.comments.map((c) => (
+                  <CommentCard key={c.id} comment={c} now={now} tz={tz} onChange={replace} />
+                ))}
+              </ul>
+              {pages > 1 && (
+                <div className="text-muted-foreground flex items-center justify-between text-sm">
+                  <span>
+                    {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="icon" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                      <ChevronLeft aria-hidden />
+                    </Button>
+                    <span className="px-2 tabular-nums">
+                      {page} / {pages}
+                    </span>
+                    <Button variant="outline" size="icon" aria-label="Next page" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
+                      <ChevronRight aria-hidden />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </>
       )}

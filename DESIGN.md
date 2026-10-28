@@ -32,6 +32,10 @@ See `components/posts/status.tsx`.
 - Inbox: one card per comment (author, platform glyph, time, text, the post it is on, replies). The primary action is
   **Reply** (brand only while the comment needs a reply); **No reply needed** archives. A failed reply stays visible with the
   platform's reason and **Try again**. Platforms that cannot share comments say so in a muted note, never an empty list.
+- Inbox > Messages (Instagram DMs): conversation list (person, last message, time, a dot when they wrote last) and a
+  thread pane; on phones the list and the thread are separate views with a Back button. The reply box exists only within
+  24 hours of the person's last message; after that a muted note says "Instagram only allows replies within 24 hours of
+  their last message." with a link to Instagram. A failed send stays in the thread with the reason and **Try again**.
 - Connection health: a disconnected account, or one that only the user can renew (LinkedIn, 60 days), shows an amber banner
   on the dashboard a week ahead with a one-click **Reconnect**.
 - Icons: lucide for UI, `react-icons/fa6` for brand glyphs (`components/platform-icon.tsx`).

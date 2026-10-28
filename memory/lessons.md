@@ -2,6 +2,9 @@
 
 Format: `YYYY-MM-DD | symptom | cause | fix | evidence`. Newest first.
 
+2026-10-28 | Uncommitted schema changes vanished during a mutation test | `git checkout <file>` restores the last COMMIT, not the pre-mutation copy | back up with cp and restore from the copy; commit before mutation-testing | session, lib/db/schema.ts
+2026-10-28 | DM sync fallback read messages for idle threads | the `since` filter ran after the per-thread reads | filter threads by updated_time before reading their messages | tests/instagram-adapter.test.ts "falls back to each thread's messages edge"
+
 2026-10-27 | Inbox tabs on phones overlapped the filter below | shadcn TabsList sets `group-data-horizontal/tabs:h-8`, which a plain `h-auto` does not override | add `group-data-horizontal/tabs:h-auto` when tabs wrap (inbox, all posts) | components/inbox/inbox-view.tsx, scratchpad ui-verify/tabs-mobile.cjs
 2026-10-27 | Playwright "Reply" button matched two elements | role names match substrings ("No reply needed") | `exact: true` for short button names | ui-verify/live.cjs
 2026-10-27 | Mutation test of the "can't refresh" gate in needsRefresh survived | branch was dead: LinkedIn has no custom refresh window, so the default 5-minute path already behaved the same | removed the branch; keep mutation-testing new policy code | lib/accounts.ts needsRefresh, tests/token-refresh.test.ts

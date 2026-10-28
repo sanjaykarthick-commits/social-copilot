@@ -2,6 +2,11 @@
 
 Format: `YYYY-MM-DD | decision | reason | alternatives rejected`. Newest first.
 
+2026-10-28 | Instagram DMs read via GET /<ig-user-id>/conversations?platform=instagram on the stored host; replies POST /<ig-user-id>/messages | live probe: /me/conversations is 403 (#298) and graph.instagram.com rejects the unified-login token | /me/* edges
+2026-10-28 | DMs: poll (cron 15 min + on opening the tab, 60s cooldown), no webhooks in v1; 24h window enforced in UI and API from the person's last message only; one idempotency key per draft so a double click sends once | webhooks need app review + public subscription; Meta rejects sends outside the window | queueing sends
+2026-10-28 | Messages capability only when instagram_(business_)manage_messages is in the stored scopes (unknown = no) | rule 13: never claim what was not granted | assuming granted like comments
+2026-10-28 | Collaborators: per post target, max 3, JSON array on the image/reel/carousel parent container only | Meta's content-publishing reference (via search summary; developers.facebook.com blocked in the session) | per-post field
+
 2026-10-27 | Main platforms: Instagram, YouTube, LinkedIn (X kept) | user asked for these three, with scheduling, stats and comment replies | –
 2026-10-27 | Instagram through "Instagram API with Instagram Login" | works with Business/Creator accounts without a Facebook Page; publish, insights and comments in one product | Facebook Login (needs a Page link)
 2026-10-27 | LinkedIn uses only self-serve products (OpenID + Share on LinkedIn); stats and comment reading switch on per account only when LINKEDIN_EXTRA_SCOPES grants r_member_postAnalytics / r_member_social | LinkedIn restricts those scopes to approved Community Management API apps; publishing must work for everyone | pretending stats exist, scraping
