@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_LEAD_MS, postBodySchema, validateForPublish, type ValidationTarget } from "@/lib/validation/posts";
+import { MAX_LEAD_MS, parseCollaborators, postBodySchema, validateForPublish, type ValidationTarget } from "@/lib/validation/posts";
 
 const NOW = new Date("2026-10-27T12:00:00Z");
 const later = (min: number) => new Date(NOW.getTime() + min * 60_000);
@@ -133,6 +133,32 @@ describe("postBodySchema", () => {
     });
     it("limits reels to 300 MB", () => {
       expect(messages({ targets: [ig()], media: [{ type: "video", sizeBytes: 301 * 1024 * 1024 }] })[0]).toMatch(/300 MB/);
+    });
+    it("allows up to 3 valid collaborator usernames", () => {
+      expect(run({ targets: [ig({ collaborators: ["ben_k", "cara.co", "dev"] })], media: [photo()] })).toEqual([]);
+      expect(messages({ targets: [ig({ collaborators: ["a", "b", "c", "d"] })], media: [photo()] })[0]).toMatch(/at most 3 collaborators/);
+      expect(messages({ targets: [ig({ collaborators: ["not a name!"] })], media: [photo()] })[0]).toMatch(/"not a name!" is not a valid Instagram username/);
+      expect(messages({ targets: [ig({ collaborators: ["x".repeat(31)] })], media: [photo()] })[0]).toMatch(/not a valid Instagram username/);
+    });
+    it("collaborators are Instagram only", () => {
+      expect(messages({ targets: [x({ collaborators: ["ben_k"] })] })[0]).toMatch(/collaborators are only available on Instagram/);
+    });
+  });
+
+  describe("collaborators input", () => {
+    it("parses the composer field: strips @, splits on commas or spaces, lowercases, drops duplicates", () => {
+      expect(parseCollaborators(" @Ben_K, cara.co  @@dev ,, ben_k ")).toEqual(["ben_k", "cara.co", "dev"]);
+      expect(parseCollaborators("")).toEqual([]);
+    });
+    it("the API normalizes and enforces the same rules", () => {
+      const t = (collaborators: string[]) => postBodySchema.safeParse({ mode: "draft", targets: [{ socialAccountId: id, collaborators }] });
+      const ok = t(["@Ben_K", " cara.co ", "ben_k"]);
+      expect(ok.success && ok.data.targets[0].collaborators).toEqual(["ben_k", "cara.co"]);
+      expect(t(["a", "b", "c", "d"]).success).toBe(false);
+      expect(t(["bad name"]).success).toBe(false);
+      expect(t(["@"]).success).toBe(false);
+      const none = postBodySchema.parse({ mode: "draft", targets: [{ socialAccountId: id }] });
+      expect(none.targets[0].collaborators).toBeUndefined();
     });
   });
 

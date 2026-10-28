@@ -42,6 +42,8 @@ export interface PublishInput {
   media: PublishMedia[];
   /** YouTube: publish the attached video. */
   asVideo?: boolean;
+  /** Instagram: usernames invited as collaborators (they must accept before the post shows on their profile). */
+  collaborators?: string[];
   /**
    * Progress saved by an earlier attempt of this same target (e.g. an Instagram container id),
    * so a retried step resumes instead of uploading again or publishing twice.

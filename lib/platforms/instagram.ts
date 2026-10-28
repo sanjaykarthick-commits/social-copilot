@@ -38,6 +38,8 @@ import {
  *
  * Both hosts share the publishing API:
  *   publish     POST /<IG_ID>/media (container) -> GET /<container>?fields=status_code -> POST /<IG_ID>/media_publish
+ *               `collaborators` (JSON array of up to 3 usernames) goes on the image, reel or carousel parent
+ *               container, never on carousel children; each invitee must accept before it shows on their profile.
  *   comments    GET /<media>/comments, POST /<comment>/replies { message }
  * Images must be JPEG: ImageKit converts on the fly (tr=f-jpg). `caption` cannot be read back
  * with Instagram Login (Facebook Login only), so the inbox shows our own text for our posts.
@@ -60,6 +62,7 @@ export const INSTAGRAM_SCOPES = [
 
 const DAY_MS = 86_400_000;
 export const IG_MAX_ITEMS = 10;
+export const IG_MAX_COLLABORATORS = 3;
 export const IG_REEL_MAX_BYTES = 300 * 1024 * 1024;
 /** How long one attempt waits for Instagram to process media before handing back to the retry loop. */
 const PROCESSING_WAIT_MS = 150_000;
@@ -341,8 +344,11 @@ async function createContainer(c: Conn, igId: string, params: Record<string, str
   return r.id;
 }
 
-async function buildContainer(c: Conn, igId: string, content: string, media: PublishMedia[]): Promise<string> {
-  const caption: Record<string, string> = content ? { caption: content } : {};
+async function buildContainer(c: Conn, igId: string, content: string, media: PublishMedia[], collaborators: string[] = []): Promise<string> {
+  const caption: Record<string, string> = {
+    ...(content ? { caption: content } : {}),
+    ...(collaborators.length ? { collaborators: JSON.stringify(collaborators) } : {}),
+  };
   if (media.length === 1) {
     const m = media[0];
     return m.type === "video"
@@ -375,7 +381,7 @@ async function latestMedia(c: Conn, igId: string): Promise<{ id: string; permali
   return r.data?.[0];
 }
 
-async function publish({ account, content, media, state, saveState }: PublishInput): Promise<PublishResult> {
+async function publish({ account, content, media, collaborators, state, saveState }: PublishInput): Promise<PublishResult> {
   const c = connOf(account);
   const igId = account.platformAccountId;
 
@@ -387,6 +393,9 @@ async function publish({ account, content, media, state, saveState }: PublishInp
   if (media.length > IG_MAX_ITEMS) throw new PlatformError(`Instagram allows at most ${IG_MAX_ITEMS} items in a carousel.`, "validation", false);
   if (media.length === 1 && media[0].type === "video" && (media[0].sizeBytes ?? 0) > IG_REEL_MAX_BYTES) {
     throw new PlatformError("Instagram reels must be 300 MB or smaller.", "validation", false);
+  }
+  if ((collaborators?.length ?? 0) > IG_MAX_COLLABORATORS) {
+    throw new PlatformError(`Instagram allows at most ${IG_MAX_COLLABORATORS} collaborators.`, "validation", false);
   }
 
   let containerId = typeof state?.containerId === "string" ? state.containerId : undefined;
@@ -402,7 +411,7 @@ async function publish({ account, content, media, state, saveState }: PublishInp
     if (status === "EXPIRED") containerId = undefined;
   }
   if (!containerId) {
-    containerId = await buildContainer(c, igId, content, media);
+    containerId = await buildContainer(c, igId, content, media, collaborators);
     await saveState?.({ containerId });
     if ((await waitForContainer(c, containerId)) === "EXPIRED") {
       throw new PlatformError("Instagram's upload expired before it could be published; will retry.", "api", true);

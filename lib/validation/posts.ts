@@ -11,10 +11,27 @@ import { PLATFORM_META } from "@/lib/platforms/meta";
 export const MIN_LEAD_MS = 60_000; // must be at least a minute in the future
 export const MAX_LEAD_MS = 365 * 86_400_000;
 
+/** Instagram allows up to 3 collaborators on a feed photo, reel or carousel (not stories). */
+export const IG_MAX_COLLABORATORS = 3;
+/** Instagram usernames: letters, numbers, periods and underscores, at most 30 characters. */
+const IG_USERNAME = /^[a-z0-9._]{1,30}$/i;
+
+/** "@Asha.Designs " -> "asha.designs". Instagram usernames are case-insensitive. */
+export const normalizeUsername = (s: string) => s.trim().replace(/^@+/, "").toLowerCase();
+
+/** The composer's free-text field ("@asha, ben_k") as a list of usernames, duplicates removed. */
+export const parseCollaborators = (raw: string) => [...new Set(raw.split(/[\s,]+/).map(normalizeUsername).filter(Boolean))];
+
 export const targetSchema = z.object({
   socialAccountId: z.uuid(),
   postAsVideo: z.boolean().default(false),
   contentOverride: z.string().max(5000).nullish(),
+  /** Instagram only: usernames invited as collaborators. */
+  collaborators: z
+    .array(z.string().transform(normalizeUsername).pipe(z.string().regex(IG_USERNAME, "Instagram usernames use only letters, numbers, periods and underscores (30 at most).")))
+    .max(IG_MAX_COLLABORATORS, `Instagram allows at most ${IG_MAX_COLLABORATORS} collaborators.`)
+    .transform((list) => [...new Set(list)])
+    .optional(),
 });
 
 export const postBodySchema = z.object({
@@ -46,6 +63,7 @@ export interface ValidationTarget {
   label: string; // e.g. "@asha on X (Twitter)"
   postAsVideo?: boolean;
   contentOverride?: string | null;
+  collaborators?: string[];
 }
 
 export interface ValidationMedia {
@@ -110,6 +128,16 @@ export function validateForPublish(input: {
     if (!meta.implemented) {
       push("this platform is not available yet.");
       continue;
+    }
+    const collaborators = t.collaborators ?? [];
+    if (collaborators.length > 0) {
+      if (t.platform !== "instagram") {
+        push("collaborators are only available on Instagram.");
+      } else {
+        const bad = collaborators.filter((u) => !IG_USERNAME.test(normalizeUsername(u)));
+        if (bad.length) push(`"${bad[0]}" is not a valid Instagram username.`);
+        if (collaborators.length > IG_MAX_COLLABORATORS) push(`at most ${IG_MAX_COLLABORATORS} collaborators.`);
+      }
     }
     if (countChars(t.platform, text) > meta.maxChars) {
       push(`over the ${meta.maxChars.toLocaleString()} character limit by ${(countChars(t.platform, text) - meta.maxChars).toLocaleString()}.`);

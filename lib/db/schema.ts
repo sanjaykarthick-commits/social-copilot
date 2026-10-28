@@ -159,6 +159,11 @@ export const postTargets = pgTable(
     contentOverride: text("content_override"),
     /** YouTube: publish the attached video instead of a text-only post. */
     postAsVideo: boolean("post_as_video").notNull().default(false),
+    /** Instagram: usernames invited as collaborators (up to 3). */
+    collaborators: text("collaborators")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     /** Adapter progress saved between retries (e.g. Instagram container id), so a retry never re-uploads or double-posts. */
     publishState: jsonb("publish_state").$type<Record<string, unknown>>(),
     createdAt: createdAt(),

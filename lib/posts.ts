@@ -88,6 +88,7 @@ function assertPublishable(body: PostBody, accounts: SocialAccount[], media: Med
       label: label(a.platform, a.username),
       postAsVideo: t.postAsVideo,
       contentOverride: t.contentOverride?.trim() ? t.contentOverride : null,
+      collaborators: t.collaborators,
     };
   });
   const issues = validateForPublish({
@@ -163,6 +164,7 @@ async function writeTargetsAndMedia(
         platform: byId.get(t.socialAccountId)!.platform,
         postAsVideo: t.postAsVideo,
         contentOverride: t.contentOverride?.trim() ? t.contentOverride : null,
+        collaborators: t.collaborators ?? [],
       })),
     );
   }
@@ -299,7 +301,7 @@ export async function publishPostNow(actor: Actor, postId: string, now: Date = n
   ]);
   const body: PostBody = {
     content: dto.content,
-    targets: pending.map((t) => ({ socialAccountId: t.socialAccountId, postAsVideo: t.postAsVideo, contentOverride: t.contentOverride })),
+    targets: pending.map((t) => ({ socialAccountId: t.socialAccountId, postAsVideo: t.postAsVideo, contentOverride: t.contentOverride, collaborators: t.collaborators })),
     mediaIds: dto.media.map((m) => m.id),
     mode: "now",
   };

@@ -14,6 +14,7 @@ export interface TargetDTO {
   error: string | null;
   postAsVideo: boolean;
   contentOverride: string | null;
+  collaborators: string[];
   publishedAt: string | null;
   account: { username: string | null; displayName: string | null; profileImageUrl: string | null } | null;
 }
@@ -76,6 +77,7 @@ export async function hydratePosts(rows: Post[]): Promise<PostDTO[]> {
       error: t.error,
       postAsVideo: t.postAsVideo,
       contentOverride: t.contentOverride,
+      collaborators: t.collaborators,
       publishedAt: iso(t.publishedAt),
       account: username !== null || displayName !== null || profileImageUrl !== null ? { username, displayName, profileImageUrl } : null,
     });

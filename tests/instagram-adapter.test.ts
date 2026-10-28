@@ -387,6 +387,50 @@ describe("Instagram adapter: publishing", () => {
     expect(s.published).toEqual([]);
   });
 
+  describe("collaborators", () => {
+    const run = async (media: Parameters<typeof instagramAdapter.publish>[0]["media"], collaborators?: string[]) => {
+      const s = igServer({ pollsUntilReady: 0 });
+      installFakeFetch([s.handler]);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const p = instagramAdapter.publish({ account, content: "With friends", media, collaborators });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await p;
+      return s;
+    };
+
+    it("invites them on a single photo as a JSON array of usernames", async () => {
+      const s = await run([img()], ["ben_k", "cara.co"]);
+      expect(s.containers.get("C1")!.params.collaborators).toBe('["ben_k","cara.co"]');
+      expect(JSON.parse(s.containers.get("C1")!.params.collaborators)).toEqual(["ben_k", "cara.co"]);
+    });
+
+    it("invites them on a reel", async () => {
+      const s = await run([vid()], ["ben_k"]);
+      expect(s.containers.get("C1")!.params).toMatchObject({ media_type: "REELS", collaborators: '["ben_k"]' });
+    });
+
+    it("invites them on the carousel parent only, never on the items", async () => {
+      const s = await run([img(1), img(2)], ["ben_k", "cara.co", "dev"]);
+      expect(s.containers.get("C1")!.params.collaborators).toBeUndefined();
+      expect(s.containers.get("C2")!.params.collaborators).toBeUndefined();
+      expect(s.containers.get("C3")!.params).toMatchObject({ media_type: "CAROUSEL", collaborators: '["ben_k","cara.co","dev"]' });
+    });
+
+    it("sends no collaborators parameter when there are none", async () => {
+      expect("collaborators" in (await run([img()], [])).containers.get("C1")!.params).toBe(false);
+      expect("collaborators" in (await run([img()])).containers.get("C1")!.params).toBe(false);
+    });
+
+    it("refuses more than 3 before calling Instagram", async () => {
+      const { fake } = installFakeFetch([]);
+      await expect(instagramAdapter.publish({ account, content: "x", media: [img()], collaborators: ["a", "b", "c", "d"] })).rejects.toMatchObject({
+        kind: "validation",
+        message: expect.stringContaining("at most 3 collaborators"),
+      });
+      expect(fake).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects posts Instagram cannot take before calling it", async () => {
     const { fake } = installFakeFetch([]);
     await expect(instagramAdapter.publish({ account, content: "text only", media: [] })).rejects.toMatchObject({ kind: "validation" });
