@@ -19,6 +19,8 @@ export interface PlatformMeta {
   requiresVideo?: boolean;
   /** Platform cannot publish text-only posts (a photo or video is required). */
   requiresMedia?: boolean;
+  /** Social Copilot can delete a published post on the platform itself (adapter.deletePost). */
+  deletesPosts?: boolean;
   blurb: string;
 }
 
@@ -67,6 +69,7 @@ export const PLATFORM_META: Record<Platform, PlatformMeta> = {
     supportsImages: true,
     supportsVideo: true,
     requiresMedia: true,
+    deletesPosts: true,
     blurb: "Photos, carousels and reels. Needs a Business or Creator account.",
   },
   tiktok: {

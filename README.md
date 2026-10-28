@@ -95,7 +95,7 @@ tokens are renewed 20 days before they expire, LinkedIn connections get a reconn
 ## Testing
 
 ```bash
-DATABASE_URL=postgresql://sc:sc@localhost:5432/social_copilot npm test   # 322 tests; DB-backed ones need a local Postgres
+DATABASE_URL=postgresql://sc:sc@localhost:5432/social_copilot npm test   # 333 tests; DB-backed ones need a local Postgres
 npm run e2e:scheduler    # boots the REAL Inngest dev server + Postgres; only api.x.com is faked (local DB only)
 ```
 

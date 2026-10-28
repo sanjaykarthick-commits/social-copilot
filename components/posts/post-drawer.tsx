@@ -19,11 +19,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { buttonVariants, Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { errorMessage, fetcher } from "@/lib/client/api";
 import { useTimezone } from "@/lib/client/hooks";
 import { PLATFORM_META } from "@/lib/platforms/meta";
+import type { CollaboratorState, TargetCollaboratorsDTO } from "@/lib/posts";
 import type { PostDTO } from "@/lib/posts-query";
 import { formatInTz } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -37,6 +39,16 @@ export function PostDrawer({ postId, onClose }: { postId: string | null; onClose
   const post = data?.post;
   const [busy, setBusy] = useState<null | "publish" | "delete">(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [alsoOnPlatforms, setAlsoOnPlatforms] = useState(false);
+  // Published copies Social Copilot can delete on the platform itself (Instagram), and the ones it can't.
+  const deletable = post?.targets.filter((t) => t.status === "published" && PLATFORM_META[t.platform].deletesPosts) ?? [];
+  const staying = post?.targets.filter((t) => t.status === "published" && !PLATFORM_META[t.platform].deletesPosts) ?? [];
+  const hasCollaborators = post?.targets.some((t) => t.collaborators.length > 0) ?? false;
+  const { data: collab } = useSWR<{ targets: TargetCollaboratorsDTO[] }>(
+    post && hasCollaborators && post.status !== "draft" && post.status !== "scheduled" ? `/api/posts/${post.id}/collaborators` : null,
+    fetcher,
+    { revalidateOnFocus: false },
+  );
 
   async function run(kind: "publish" | "delete") {
     if (!post) return;
@@ -47,14 +59,16 @@ export function PostDrawer({ postId, onClose }: { postId: string | null; onClose
         toast.success(post.status === "failed" ? "Retrying the platforms that failed." : "Publishing now.");
         await mutate();
       } else {
-        await deletePostById(post.id);
-        toast.success("Post deleted.");
+        const remote = alsoOnPlatforms && deletable.length > 0;
+        await deletePostById(post.id, { fromPlatforms: remote });
+        toast.success(remote ? `Post deleted here and on ${platformList(deletable)}.` : "Post deleted.");
         setConfirmDelete(false);
         onClose();
       }
     } catch (e) {
-      toast.error(errorMessage(e), { duration: 9000 });
+      toast.error(errorMessage(e), { duration: 12000 });
       setConfirmDelete(false);
+      if (kind === "delete") await mutate(); // a platform may have deleted part of it
     } finally {
       setBusy(null);
     }
@@ -136,6 +150,7 @@ export function PostDrawer({ postId, onClose }: { postId: string | null; onClose
                           <TargetStatusText status={t.status} />
                         </div>
                         {t.error && <p className="text-destructive mt-1.5 text-xs break-words">{t.error}</p>}
+                        {t.collaborators.length > 0 && <CollaboratorList usernames={t.collaborators} status={collab?.targets.find((c) => c.targetId === t.id)} published={t.status === "published"} />}
                         {t.platformPostUrl && (
                           <a href={t.platformPostUrl} target="_blank" rel="noreferrer" className="text-primary mt-1.5 inline-flex items-center gap-1 text-xs font-medium underline-offset-4 hover:underline">
                             View on {PLATFORM_META[t.platform].name} <ExternalLink className="size-3" aria-hidden />
@@ -183,18 +198,37 @@ export function PostDrawer({ postId, onClose }: { postId: string | null; onClose
         </SheetContent>
       </Sheet>
 
-      <AlertDialog open={confirmDelete} onOpenChange={(o) => !o && busy !== "delete" && setConfirmDelete(false)}>
+      <AlertDialog
+        open={confirmDelete}
+        onOpenChange={(o) => {
+          if (o || busy === "delete") return;
+          setConfirmDelete(false);
+          setAlsoOnPlatforms(false);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this post?</AlertDialogTitle>
             <AlertDialogDescription>
-              {post?.status === "published"
-                ? "This removes it from Social Copilot. It stays on the platforms it was published to."
+              {deletable.length + staying.length > 0
+                ? alsoOnPlatforms && deletable.length > 0
+                  ? `It will be deleted on ${platformList(deletable)} and removed from Social Copilot. This can't be undone.`
+                  : "This removes it from Social Copilot. It stays on the platforms it was published to."
                 : post?.status === "scheduled"
                   ? "It will not be published."
                   : "This cannot be undone."}
+              {alsoOnPlatforms && staying.length > 0 && ` Copies on ${platformList(staying)} stay there; delete those on the platform.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deletable.length > 0 && (
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-sm">
+              <Checkbox checked={alsoOnPlatforms} onCheckedChange={(v) => setAlsoOnPlatforms(Boolean(v))} disabled={busy === "delete"} className="mt-0.5" />
+              <span>
+                Also delete it on {platformList(deletable)}
+                <span className="text-muted-foreground block text-xs">Removes the post, its likes and comments from {platformList(deletable)}.</span>
+              </span>
+            </label>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy === "delete"}>Keep it</AlertDialogCancel>
             <AlertDialogAction variant="destructive" disabled={busy === "delete"} onClick={() => run("delete")}>
@@ -204,5 +238,43 @@ export function PostDrawer({ postId, onClose }: { postId: string | null; onClose
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/** "Instagram (@asha)", or "Instagram (@asha, @shop)" for several accounts on one platform. */
+function platformList(targets: PostDTO["targets"]): string {
+  const byPlatform = new Map<string, string[]>();
+  for (const t of targets) byPlatform.set(t.platform, [...(byPlatform.get(t.platform) ?? []), t.account?.username ? `@${t.account.username}` : (t.account?.displayName ?? "")]);
+  return [...byPlatform]
+    .map(([p, names]) => `${PLATFORM_META[p as keyof typeof PLATFORM_META].name}${names.some(Boolean) ? ` (${names.filter(Boolean).join(", ")})` : ""}`)
+    .join(" and ");
+}
+
+const COLLAB_LABEL: Record<CollaboratorState, { text: string; tone: string }> = {
+  accepted: { text: "Accepted", tone: "text-success" },
+  pending: { text: "Invite sent, waiting for them to accept in Instagram", tone: "text-muted-foreground" },
+  declined: { text: "Declined", tone: "text-muted-foreground" },
+  not_invited: {
+    text: "Instagram has no invite for this account. It may not accept collaboration invites, or be private or restricted. To try again, delete the post on Instagram and publish it again.",
+    tone: "text-destructive",
+  },
+  not_published: { text: "Invited when the post publishes", tone: "text-muted-foreground" },
+  unknown: { text: "Status unknown", tone: "text-muted-foreground" },
+};
+
+function CollaboratorList({ usernames, status, published }: { usernames: string[]; status: TargetCollaboratorsDTO | undefined; published: boolean }) {
+  const rows = status?.collaborators ?? usernames.map((username) => ({ username, status: (published ? "unknown" : "not_published") as CollaboratorState }));
+  return (
+    <div className="mt-2 space-y-1 border-t pt-2 text-xs">
+      <p className="text-muted-foreground font-medium">Collaborators{published && !status && " (checking with Instagram…)"}</p>
+      <ul className="space-y-1">
+        {rows.map((c) => (
+          <li key={c.username}>
+            <span className="font-medium">@{c.username}</span> <span className={COLLAB_LABEL[c.status].tone}>· {COLLAB_LABEL[c.status].text}</span>
+          </li>
+        ))}
+      </ul>
+      {status?.error && <p className="text-destructive break-words">{status.error}</p>}
+    </div>
   );
 }

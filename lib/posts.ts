@@ -1,10 +1,13 @@
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
-import type { PlanKey } from "@/lib/constants";
+import { and, asc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { getUsableAccount } from "@/lib/accounts";
+import type { PlanKey, Platform } from "@/lib/constants";
 import { getDb } from "@/lib/db";
-import { mediaAssets, postTargets, posts, socialAccounts, type MediaAsset, type Post, type SocialAccount } from "@/lib/db/schema";
+import { comments, mediaAssets, postTargets, posts, socialAccounts, type MediaAsset, type Post, type SocialAccount } from "@/lib/db/schema";
 import { AppError, notFound } from "@/lib/errors";
 import { newScheduleToken, sendCancel, sendPublishNow, sendScheduled } from "@/lib/inngest/events";
-import { platformName } from "@/lib/platforms/meta";
+import { getAdapter } from "@/lib/platforms";
+import { PLATFORM_META, platformName } from "@/lib/platforms/meta";
+import { PlatformError, type CollaboratorInviteStatus } from "@/lib/platforms/types";
 import { assertCanQueuePosts } from "@/lib/plans";
 import { getPostDTO, type PostDTO } from "@/lib/posts-query";
 import {
@@ -324,9 +327,15 @@ export async function publishPostNow(actor: Actor, postId: string, now: Date = n
   return (await getPostDTO(actor.userId, postId))!;
 }
 
-export async function deletePost(actor: Actor, postId: string): Promise<void> {
+/**
+ * Delete a post. With `fromPlatforms`, its published copies are first deleted on the platforms that allow it
+ * (Instagram). If a platform refuses, nothing is deleted here: the user sees why, and can retry or delete it
+ * from Social Copilot only.
+ */
+export async function deletePost(actor: Actor, postId: string, opts: { fromPlatforms?: boolean } = {}): Promise<void> {
   const existing = await loadOwned(actor.userId, postId);
   if (existing.status === "publishing") throw new AppError("CONFLICT", "This post is being published right now. Try again in a moment.", 409);
+  if (opts.fromPlatforms) await deleteOnPlatforms(postId);
   if (existing.status === "scheduled" && existing.inngestEventId) {
     await sendCancel({ postId, token: existing.inngestEventId }).catch((e) =>
       console.warn("[posts] cancel on delete failed (harmless, the run finds no post):", e instanceof Error ? e.message : e),
@@ -337,4 +346,70 @@ export async function deletePost(actor: Actor, postId: string): Promise<void> {
     await tx.delete(mediaAssets).where(eq(mediaAssets.postId, postId));
     await tx.delete(posts).where(eq(posts.id, postId));
   });
+}
+
+async function deleteOnPlatforms(postId: string) {
+  const db = getDb();
+  const live = await db
+    .select({ t: postTargets, username: socialAccounts.username })
+    .from(postTargets)
+    .innerJoin(socialAccounts, eq(socialAccounts.id, postTargets.socialAccountId))
+    .where(and(eq(postTargets.postId, postId), eq(postTargets.status, "published"), isNotNull(postTargets.platformPostId)));
+  const failures: string[] = [];
+  for (const { t, username } of live) {
+    const platform = t.platform as Platform;
+    const adapter = getAdapter(platform);
+    if (!PLATFORM_META[platform]?.deletesPosts || !adapter.deletePost) continue;
+    try {
+      await adapter.deletePost(await getUsableAccount(t.socialAccountId), t.platformPostId!);
+    } catch (e) {
+      if (!(e instanceof PlatformError) && !(e instanceof AppError)) console.error("[posts] platform delete failed", e);
+      failures.push(`${label(platform, username)}: ${e instanceof PlatformError || e instanceof AppError ? e.message : "the post could not be deleted."}`);
+      continue;
+    }
+    // Gone on the platform: forget its id (a retry never asks again) and its comments (they went with it).
+    await db.update(postTargets).set({ platformPostId: null, platformPostUrl: null, updatedAt: new Date() }).where(eq(postTargets.id, t.id));
+    await db.delete(comments).where(and(eq(comments.socialAccountId, t.socialAccountId), eq(comments.platformPostId, t.platformPostId!)));
+  }
+  if (failures.length) {
+    throw new AppError(
+      "PLATFORM_DELETE_FAILED",
+      `${failures.join(" ")} Nothing was deleted in Social Copilot. Try again, or untick "Also delete" to remove it from Social Copilot only.`,
+      502,
+    );
+  }
+}
+
+/** "not_invited": the platform has no invite for a requested username (it dropped or refused it). */
+export type CollaboratorState = CollaboratorInviteStatus | "not_invited" | "not_published";
+
+export interface TargetCollaboratorsDTO {
+  targetId: string;
+  collaborators: { username: string; status: CollaboratorState }[];
+  /** Why the platform's answer is missing (e.g. a permission error). */
+  error: string | null;
+}
+
+/** For each target with collaborators: what the platform says about each invite (asked live, not stored). */
+export async function postCollaborators(userId: string, postId: string): Promise<TargetCollaboratorsDTO[]> {
+  await loadOwned(userId, postId);
+  const targets = await getDb().select().from(postTargets).where(eq(postTargets.postId, postId)).orderBy(asc(postTargets.createdAt));
+  const out: TargetCollaboratorsDTO[] = [];
+  for (const t of targets) {
+    if (t.collaborators.length === 0) continue;
+    const requested = (status: CollaboratorState) => t.collaborators.map((username) => ({ username, status }));
+    const adapter = getAdapter(t.platform as Platform);
+    if (t.status !== "published" || !t.platformPostId || !adapter.fetchCollaborators) {
+      out.push({ targetId: t.id, collaborators: requested("not_published"), error: null });
+      continue;
+    }
+    try {
+      const invites = await adapter.fetchCollaborators(await getUsableAccount(t.socialAccountId), t.platformPostId);
+      const byName = new Map(invites.map((i) => [i.username, i.status]));
+      out.push({ targetId: t.id, collaborators: t.collaborators.map((username) => ({ username, status: byName.get(username) ?? "not_invited" })), error: null });
+    } catch (e) {
+      out.push({ targetId: t.id, collaborators: requested("unknown"), error: e instanceof PlatformError || e instanceof AppError ? e.message : "Could not read the collaborators." });
+    }
+  }
+  return out;
 }

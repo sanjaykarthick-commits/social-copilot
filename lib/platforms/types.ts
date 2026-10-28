@@ -114,6 +114,14 @@ export interface FetchCommentsArgs {
   since: Date;
 }
 
+export type CollaboratorInviteStatus = "accepted" | "pending" | "declined" | "unknown";
+
+/** An account invited to collaborate on a published post, as the platform reports it. */
+export interface CollaboratorStatus {
+  username: string;
+  status: CollaboratorInviteStatus;
+}
+
 /** One message in a direct-message conversation. */
 export interface PlatformMessage {
   platformMessageId: string;
@@ -170,6 +178,10 @@ export interface PlatformAdapter {
   fetchMetrics?(account: AdapterAccount, platformPostIds: string[]): Promise<Map<string, PostMetrics>>;
   fetchComments?(account: AdapterAccount, args: FetchCommentsArgs): Promise<PlatformComment[]>;
   replyToComment?(account: AdapterAccount, comment: { platformCommentId: string; platformPostId: string; extra?: Record<string, unknown> }, text: string): Promise<{ platformReplyId: string }>;
+  /** Delete a published post on the platform. */
+  deletePost?(account: AdapterAccount, platformPostId: string): Promise<void>;
+  /** Collaborator invites on a published post and their status. */
+  fetchCollaborators?(account: AdapterAccount, platformPostId: string): Promise<CollaboratorStatus[]>;
   /** Direct-message conversations with recent activity. */
   fetchConversations?(account: AdapterAccount, args: FetchConversationsArgs): Promise<PlatformConversation[]>;
   /** Reply in an existing conversation (platforms that allow it never let a business start one). */

@@ -148,6 +148,11 @@ professional account). No Facebook Page is needed.
 8. **Collaborators** (Instagram): post a photo with one collaborator (an account you control) -> the post publishes,
    the collaborator gets an invite in Instagram, and after accepting, the post shows on both profiles. Repeat once with
    a reel and once with a carousel. Expect an error, not a crash, for a username that does not exist or is private.
+   All posts > open the post: under the Instagram account, **Collaborators** shows what Instagram reports for each
+   invite (Accepted / waiting / Declined / "Instagram has no invite for this account").
+10. **Delete on Instagram**: All posts > open a published Instagram test post > Delete > tick "Also delete it on
+   Instagram" > Delete. It disappears from Instagram and from Social Copilot. If Meta refuses, the post stays in Social
+   Copilot and the message says why.
 9. **Messages** (Instagram): from another account, DM your Instagram account. Inbox > Messages > it appears (open the
    tab or press Sync now). Open it, reply once, and check it arrives in Instagram; it must appear **once** in the
    thread after the next sync (no duplicate). Double-click Send on a second reply: it must arrive once. A conversation
