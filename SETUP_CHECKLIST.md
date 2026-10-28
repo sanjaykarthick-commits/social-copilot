@@ -19,6 +19,7 @@ or the `https://<project>.vercel.app` Vercel gives you.
 |---|---|---|
 | Sign up, schedule, calendar, dashboard | today | today |
 | **Instagram**: publish, stats, comments | today, in Meta's development mode, once your Instagram account is added as a tester | after **Meta App Review** (Advanced Access) + **Business Verification**. Usually days to weeks. |
+| **Instagram**: direct messages (Inbox > Messages) | today, in development mode, if your login configuration grants `instagram_manage_messages` | after **Meta App Review: Advanced Access for `instagram_manage_messages`** (plus Business Verification). Until then other people's accounts show "Reconnect and allow message access". |
 | **YouTube**: publish, stats, comments | today (add yourself as a test user) | after **Google OAuth verification** for the YouTube scopes. Until then up to 100 users, who see an "unverified app" warning. |
 | **LinkedIn**: publish (text, photos, video) | today | today (self-serve products, no review) |
 | **LinkedIn**: post stats + reading comments | only if LinkedIn approves your app for the **Community Management API** | same |
@@ -54,7 +55,7 @@ the app asks ImageKit to convert on the fly (`tr=f-jpg`), so leave ImageKit's UR
 2. **Do not set `INNGEST_DEV` on Vercel.**
 3. If Vercel Deployment Protection is on, add the bypass secret in Inngest's app settings so it can reach `<APP_URL>/api/inngest`.
 4. If Inngest shows no app or no functions (posts then stay on "Publishing" forever), sync by hand after the deploy:
-`curl -X PUT <APP_URL>/api/inngest` should answer "Successfully registered". After deploying, Inngest shows four functions: `publish-post`, `sync-post-metrics`, `sync-comments` (every 15 min), `refresh-tokens` (daily).
+`curl -X PUT <APP_URL>/api/inngest` should answer "Successfully registered". After deploying, Inngest shows five functions: `publish-post`, `sync-post-metrics`, `sync-comments` (every 15 min), `sync-messages` (every 15 min), `refresh-tokens` (daily).
 
 ## 7. Instagram (Meta) [YOU]
 Requirements: an Instagram **Business or Creator** account (Instagram app > Settings > Account type and tools > Switch to
@@ -87,6 +88,13 @@ professional account). No Facebook Page is needed.
    `instagram_business_basic`, `instagram_business_content_publish`, `instagram_business_manage_comments`,
    `instagram_business_manage_insights`. Meta asks for a screencast of each feature (connect, publish, insights, reply)
    and **Business Verification** of your business. Then switch the app to **Live**.
+   **Direct messages** also need **Advanced Access for `instagram_manage_messages`** (with unified login; with Instagram
+   login it is `instagram_business_manage_messages`, which the app does not request yet). Screencast: open Inbox >
+   Messages, open a conversation, send a reply within 24 hours of the person's message, show it arriving in Instagram.
+   Without it, DMs only work for accounts with a role on the app (yours). The app reads messages by polling (every 15
+   minutes, and when the Messages tab opens); no messaging webhook is needed for v1.
+   Rules Meta enforces and the app follows: replies only within **24 hours** of the person's last message (the reply
+   box closes after that), and a business can never start a conversation.
 7. Limits to know: Instagram allows about 100 API-published posts per 24 hours per account; photos are sent as JPEG between
    4:5 and 1.91:1 (the composer checks this); a single video is published as a Reel (max 300 MB); carousels hold up to 10 items here.
    Connections last 60 days and are renewed automatically (daily job).
@@ -137,6 +145,14 @@ professional account). No Facebook Page is needed.
 6. Comment on your Instagram post and your YouTube video from another account. Inbox > **Sync now** shows them; reply to each
    and check the reply appears on the platform.
 7. A few hours later the dashboard's Engagement card shows likes, comments and views per platform.
+8. **Collaborators** (Instagram): post a photo with one collaborator (an account you control) -> the post publishes,
+   the collaborator gets an invite in Instagram, and after accepting, the post shows on both profiles. Repeat once with
+   a reel and once with a carousel. Expect an error, not a crash, for a username that does not exist or is private.
+9. **Messages** (Instagram): from another account, DM your Instagram account. Inbox > Messages > it appears (open the
+   tab or press Sync now). Open it, reply once, and check it arrives in Instagram; it must appear **once** in the
+   thread after the next sync (no duplicate). Double-click Send on a second reply: it must arrive once. A conversation
+   whose last message from them is over 24 hours old shows "Instagram only allows replies within 24 hours of their
+   last message." with no reply box.
 
 ## Local development (optional)
 - `npm run demo` (needs a local Postgres: `docker compose up -d db`): the full app with sample data and a built-in demo user,

@@ -1,5 +1,6 @@
 import { refreshExpiringAccounts } from "@/lib/accounts";
 import { syncComments } from "@/lib/comments";
+import { syncMessages } from "@/lib/messages";
 import { EVENTS, type PostEventData } from "@/lib/inngest/events";
 import { inngest } from "@/lib/inngest/client";
 import { syncMetrics } from "@/lib/metrics";
@@ -88,10 +89,22 @@ export const syncAllComments = inngest.createFunction(
   },
 );
 
+/**
+ * Instagram DMs, every 15 minutes (offset from the comment sync). Polling, not webhooks, in v1; the
+ * Messages tab also syncs when it opens.
+ */
+export const syncAllMessages = inngest.createFunction(
+  { id: "sync-messages", triggers: [{ cron: "7-59/15 * * * *" }], retries: 1, concurrency: { limit: 1 } },
+  async ({ step }) => {
+    const r = await step.run("sync", () => syncMessages());
+    return { added: r.added, accounts: r.results.length, failed: r.failed };
+  },
+);
+
 /** Renew tokens before they lapse, even for idle accounts (an Instagram token unused for 60 days is gone). */
 export const refreshTokens = inngest.createFunction(
   { id: "refresh-tokens", triggers: [{ cron: "17 3 * * *" }], retries: 1 },
   async ({ step }) => step.run("refresh", () => refreshExpiringAccounts()),
 );
 
-export const functions = [publishPost, syncPostMetrics, syncAllComments, refreshTokens];
+export const functions = [publishPost, syncPostMetrics, syncAllComments, syncAllMessages, refreshTokens];

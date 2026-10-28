@@ -387,6 +387,50 @@ describe("Instagram adapter: publishing", () => {
     expect(s.published).toEqual([]);
   });
 
+  describe("collaborators", () => {
+    const run = async (media: Parameters<typeof instagramAdapter.publish>[0]["media"], collaborators?: string[]) => {
+      const s = igServer({ pollsUntilReady: 0 });
+      installFakeFetch([s.handler]);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const p = instagramAdapter.publish({ account, content: "With friends", media, collaborators });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await p;
+      return s;
+    };
+
+    it("invites them on a single photo as a JSON array of usernames", async () => {
+      const s = await run([img()], ["ben_k", "cara.co"]);
+      expect(s.containers.get("C1")!.params.collaborators).toBe('["ben_k","cara.co"]');
+      expect(JSON.parse(s.containers.get("C1")!.params.collaborators)).toEqual(["ben_k", "cara.co"]);
+    });
+
+    it("invites them on a reel", async () => {
+      const s = await run([vid()], ["ben_k"]);
+      expect(s.containers.get("C1")!.params).toMatchObject({ media_type: "REELS", collaborators: '["ben_k"]' });
+    });
+
+    it("invites them on the carousel parent only, never on the items", async () => {
+      const s = await run([img(1), img(2)], ["ben_k", "cara.co", "dev"]);
+      expect(s.containers.get("C1")!.params.collaborators).toBeUndefined();
+      expect(s.containers.get("C2")!.params.collaborators).toBeUndefined();
+      expect(s.containers.get("C3")!.params).toMatchObject({ media_type: "CAROUSEL", collaborators: '["ben_k","cara.co","dev"]' });
+    });
+
+    it("sends no collaborators parameter when there are none", async () => {
+      expect("collaborators" in (await run([img()], [])).containers.get("C1")!.params).toBe(false);
+      expect("collaborators" in (await run([img()])).containers.get("C1")!.params).toBe(false);
+    });
+
+    it("refuses more than 3 before calling Instagram", async () => {
+      const { fake } = installFakeFetch([]);
+      await expect(instagramAdapter.publish({ account, content: "x", media: [img()], collaborators: ["a", "b", "c", "d"] })).rejects.toMatchObject({
+        kind: "validation",
+        message: expect.stringContaining("at most 3 collaborators"),
+      });
+      expect(fake).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects posts Instagram cannot take before calling it", async () => {
     const { fake } = installFakeFetch([]);
     await expect(instagramAdapter.publish({ account, content: "text only", media: [] })).rejects.toMatchObject({ kind: "validation" });
@@ -483,5 +527,99 @@ describe("Instagram adapter: comments", () => {
   it("reports comment access from the granted permissions", () => {
     expect(instagramAdapter.capabilities!({ scopes: "instagram_business_basic,instagram_business_manage_comments" }).comments).toBe(true);
     expect(instagramAdapter.capabilities!({ scopes: "instagram_business_basic" })).toMatchObject({ comments: false, note: expect.stringContaining("Reconnect") });
+  });
+});
+
+describe("Instagram adapter: direct messages", () => {
+  const FB = "https://graph.facebook.com/v26.0";
+  // The live account: unified login, Page-less, everything on graph.facebook.com.
+  const dmAccount: AdapterAccount = { ...account, metadata: { graph: "facebook" }, scopes: "instagram_basic,instagram_manage_comments,instagram_content_publish,instagram_manage_messages,public_profile" };
+  const since = new Date("2026-10-20T00:00:00Z");
+  const me = { id: "1784", username: "asha.makes" };
+  const ben = { id: "IGSID-ben", username: "ben_k" };
+  const thread = {
+    id: "T1",
+    updated_time: "2026-10-27T09:05:00+0000",
+    participants: { data: [me, ben] },
+    messages: {
+      data: [
+        { id: "m3", created_time: "2026-10-27T09:05:00+0000", from: me, to: { data: [ben] }, message: "Yes, still available!" },
+        { id: "m2", created_time: "2026-10-27T09:00:00+0000", from: ben, to: { data: [me] }, message: "Is the print still available?" },
+        { id: "m1", created_time: "2026-10-27T08:59:00+0000", from: ben, to: { data: [me] } }, // a sticker: no text
+      ],
+    },
+  };
+  const old = { id: "T0", updated_time: "2026-09-01T10:00:00+0000", participants: { data: [me, { id: "IGSID-old", username: "old" }] }, messages: { data: [] } };
+
+  function dmServer(opts: { nestedFails?: boolean } = {}) {
+    return (r: RecordedRequest) => {
+      const u = new URL(r.url);
+      if (!r.url.startsWith(FB)) return undefined;
+      if (r.method === "GET" && u.pathname === "/v26.0/1784/conversations") {
+        if (opts.nestedFails && u.searchParams.get("fields")!.includes("messages")) return json({ error: { message: "(#100) Unknown fields: messages", code: 100 } }, 400);
+        const nested = u.searchParams.get("fields")!.includes("messages");
+        return json({ data: [thread, old].map((t) => (nested ? t : { id: t.id, updated_time: t.updated_time, participants: t.participants })) });
+      }
+      if (r.method === "GET" && u.pathname === "/v26.0/T1/messages") return json({ data: thread.messages.data });
+      if (r.method === "POST" && u.pathname === "/v26.0/1784/messages") return json({ recipient_id: "IGSID-ben", message_id: "mid.NEW" });
+      return undefined;
+    };
+  }
+
+  it("lists conversations from /<ig-user-id>/conversations on graph.facebook.com (not /me), newer than `since`", async () => {
+    const { requests } = installFakeFetch([dmServer()]);
+    const out = await instagramAdapter.fetchConversations!(dmAccount, { since });
+    const u = new URL(requests[0].url);
+    expect(u.origin + u.pathname).toBe(`${FB}/1784/conversations`);
+    expect(u.searchParams.get("platform")).toBe("instagram");
+    expect(u.searchParams.get("fields")).toBe("id,updated_time,participants,messages.limit(20){id,created_time,from,to,message}");
+    expect(u.searchParams.get("access_token")).toBe("IGLONG");
+    expect(out).toHaveLength(1); // T0 had no activity since `since`
+    expect(out[0]).toMatchObject({ platformConversationId: "T1", participant: { id: "IGSID-ben", handle: "ben_k" }, updatedAt: new Date("2026-10-27T09:05:00Z") });
+    expect(out[0].messages).toEqual([
+      { platformMessageId: "m3", fromMe: true, text: "Yes, still available!", sentAt: new Date("2026-10-27T09:05:00Z") },
+      { platformMessageId: "m2", fromMe: false, text: "Is the print still available?", sentAt: new Date("2026-10-27T09:00:00Z") },
+      { platformMessageId: "m1", fromMe: false, text: "", sentAt: new Date("2026-10-27T08:59:00Z") },
+    ]);
+  });
+
+  it("falls back to each thread's messages edge when nested fields are refused", async () => {
+    const { requests } = installFakeFetch([dmServer({ nestedFails: true })]);
+    const out = await instagramAdapter.fetchConversations!(dmAccount, { since });
+    expect(out[0].messages.map((m) => m.platformMessageId)).toEqual(["m3", "m2", "m1"]);
+    expect(requests.some((r) => r.url.startsWith(`${FB}/T1/messages?`))).toBe(true);
+  });
+
+  it("replies with POST /<ig-user-id>/messages, addressed to the person's IGSID", async () => {
+    const { requests } = installFakeFetch([dmServer()]);
+    const out = await instagramAdapter.sendMessage!(dmAccount, { platformConversationId: "T1", participantId: "IGSID-ben" }, "Thanks! Sending the link.");
+    expect(out).toEqual({ platformMessageId: "mid.NEW" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(`${FB}/1784/messages`);
+    const body = params(requests[0]);
+    expect(JSON.parse(body.recipient)).toEqual({ id: "IGSID-ben" });
+    expect(JSON.parse(body.message)).toEqual({ text: "Thanks! Sending the link." });
+    expect(body.access_token).toBe("IGLONG");
+  });
+
+  it("explains Meta's refusals: outside the 24-hour window, or the person is unavailable", async () => {
+    installFakeFetch([() => json({ error: { message: "(#10) This message is sent outside of allowed window.", code: 10, error_subcode: 2534022 } }, 400)]);
+    await expect(instagramAdapter.sendMessage!(dmAccount, { platformConversationId: "T1", participantId: "x" }, "hi")).rejects.toMatchObject({
+      kind: "validation",
+      retryable: false,
+      message: "Instagram only allows replies within 24 hours of their last message.",
+    });
+    installFakeFetch([() => json({ error: { message: "(#551) This person isn't available right now.", code: 551, error_subcode: 1545041 } }, 400)]);
+    await expect(instagramAdapter.sendMessage!(dmAccount, { platformConversationId: "T1", participantId: "x" }, "hi")).rejects.toMatchObject({
+      kind: "validation",
+      message: expect.stringContaining("isn't available"),
+    });
+  });
+
+  it("claims messages only when the permission is granted (never assumed)", () => {
+    expect(instagramAdapter.capabilities!({ scopes: dmAccount.scopes })).toMatchObject({ messages: true, messagesNote: undefined });
+    expect(instagramAdapter.capabilities!({ scopes: "instagram_business_basic,instagram_business_manage_messages" }).messages).toBe(true);
+    expect(instagramAdapter.capabilities!({ scopes: INSTAGRAM_SCOPES.join(",") })).toMatchObject({ messages: false, messagesNote: expect.stringContaining("Reconnect") });
+    expect(instagramAdapter.capabilities!({ scopes: null }).messages).toBe(false);
   });
 });

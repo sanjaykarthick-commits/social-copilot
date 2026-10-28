@@ -89,13 +89,13 @@ Inngest `publish-post`: [sleep until the time] ─▶ re-check token + status in
   and a post Instagram already published is never published again.
 - A post that is partly published shows **Failed** with a per-platform reason; **Retry** re-runs only what failed.
 
-Other scheduled jobs: `sync-comments` (every 15 min), `sync-post-metrics` (every 6 h), `refresh-tokens` (daily; Instagram
+Other scheduled jobs: `sync-comments` (every 15 min), `sync-messages` (Instagram DMs, every 15 min), `sync-post-metrics` (every 6 h), `refresh-tokens` (daily; Instagram
 tokens are renewed 20 days before they expire, LinkedIn connections get a reconnect warning).
 
 ## Testing
 
 ```bash
-DATABASE_URL=postgresql://sc:sc@localhost:5432/social_copilot npm test   # 279 tests; DB-backed ones need a local Postgres
+DATABASE_URL=postgresql://sc:sc@localhost:5432/social_copilot npm test   # 322 tests; DB-backed ones need a local Postgres
 npm run e2e:scheduler    # boots the REAL Inngest dev server + Postgres; only api.x.com is faked (local DB only)
 ```
 

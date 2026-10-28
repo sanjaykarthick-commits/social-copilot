@@ -42,6 +42,8 @@ export interface PublishInput {
   media: PublishMedia[];
   /** YouTube: publish the attached video. */
   asVideo?: boolean;
+  /** Instagram: usernames invited as collaborators (they must accept before the post shows on their profile). */
+  collaborators?: string[];
   /**
    * Progress saved by an earlier attempt of this same target (e.g. an Instagram container id),
    * so a retried step resumes instead of uploading again or publishing twice.
@@ -112,12 +114,40 @@ export interface FetchCommentsArgs {
   since: Date;
 }
 
+/** One message in a direct-message conversation. */
+export interface PlatformMessage {
+  platformMessageId: string;
+  /** Sent by the connected account (not the other person). */
+  fromMe: boolean;
+  /** Empty for attachments, stickers and other content the API does not return as text. */
+  text: string;
+  sentAt: Date;
+}
+
+/** A direct-message conversation with one person, with its most recent messages. */
+export interface PlatformConversation {
+  platformConversationId: string;
+  /** The other person. `id` is the platform-scoped id replies are addressed to. */
+  participant: { id: string; handle: string | null; name: string | null; imageUrl: string | null };
+  updatedAt: Date;
+  messages: PlatformMessage[];
+}
+
+export interface FetchConversationsArgs {
+  /** Only conversations with activity after this are needed (older ones are already stored). */
+  since: Date;
+}
+
 /** What this connection can do, given the permissions the user (and the platform) granted. */
 export interface AccountCapabilities {
   metrics: boolean;
   comments: boolean;
   /** Plain-language reason when something is unavailable. */
   note?: string;
+  /** Direct messages (absent: the platform has none here). */
+  messages?: boolean;
+  /** Plain-language reason when messages are unavailable. */
+  messagesNote?: string;
 }
 
 export interface PlatformAdapter {
@@ -140,5 +170,9 @@ export interface PlatformAdapter {
   fetchMetrics?(account: AdapterAccount, platformPostIds: string[]): Promise<Map<string, PostMetrics>>;
   fetchComments?(account: AdapterAccount, args: FetchCommentsArgs): Promise<PlatformComment[]>;
   replyToComment?(account: AdapterAccount, comment: { platformCommentId: string; platformPostId: string; extra?: Record<string, unknown> }, text: string): Promise<{ platformReplyId: string }>;
+  /** Direct-message conversations with recent activity. */
+  fetchConversations?(account: AdapterAccount, args: FetchConversationsArgs): Promise<PlatformConversation[]>;
+  /** Reply in an existing conversation (platforms that allow it never let a business start one). */
+  sendMessage?(account: AdapterAccount, conversation: { platformConversationId: string; participantId: string }, text: string): Promise<{ platformMessageId: string }>;
   capabilities?(account: Pick<AdapterAccount, "scopes">): AccountCapabilities;
 }

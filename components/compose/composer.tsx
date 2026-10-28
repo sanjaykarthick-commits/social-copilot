@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/page-header";
 import { PlatformGlyph } from "@/components/platform-icon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,13 +26,15 @@ import { countChars } from "@/lib/platforms/length";
 import { PLATFORM_META } from "@/lib/platforms/meta";
 import type { PostDTO } from "@/lib/posts-query";
 import { formatInTz } from "@/lib/time";
-import { validateForPublish, type PostBody, type ValidationTarget } from "@/lib/validation/posts";
+import { IG_MAX_COLLABORATORS, parseCollaborators, validateForPublish, type PostBody, type ValidationTarget } from "@/lib/validation/posts";
 import { cn } from "@/lib/utils";
 
 interface Selection {
   postAsVideo: boolean;
   /** Per-account text; null means "use the shared text". */
   override: string | null;
+  /** Instagram: collaborator usernames as typed ("@asha, ben_k"). */
+  collaborators: string;
 }
 
 interface Initial {
@@ -68,7 +71,9 @@ export function Composer({ editId }: { editId?: string }) {
   const initial: Initial = post
     ? {
         content: post.content,
-        selected: Object.fromEntries(post.targets.map((t) => [t.socialAccountId, { postAsVideo: t.postAsVideo, override: t.contentOverride }])),
+        selected: Object.fromEntries(
+          post.targets.map((t) => [t.socialAccountId, { postAsVideo: t.postAsVideo, override: t.contentOverride, collaborators: t.collaborators.map((u) => `@${u}`).join(", ") }]),
+        ),
         media: post.media.map((m) => ({ id: m.id, url: m.url, thumbnailUrl: m.thumbnailUrl, type: m.type, sizeBytes: m.sizeBytes })),
         schedule: post.scheduledAt && post.status !== "failed" ? scheduleFromInstant(new Date(post.scheduledAt), tz) : EMPTY_SCHEDULE,
       }
@@ -128,6 +133,8 @@ function ComposerForm({ editId, initial, tz, status }: { editId?: string; initia
   const selectedAccounts = selectedIds.map((id) => accountById.get(id)!);
   const scheduledAt = schedule.enabled ? scheduleToInstant(schedule, tz) : null;
   const hasVideo = media.some((m) => m.type === "video");
+  /** Collaborators only apply to Instagram; anything typed for another platform is ignored. */
+  const collaboratorsOf = (id: string) => (accountById.get(id)?.platform === "instagram" ? parseCollaborators(selected[id].collaborators) : []);
 
   const targets: ValidationTarget[] = selectedAccounts.map((a) => ({
     socialAccountId: a.id,
@@ -135,6 +142,7 @@ function ComposerForm({ editId, initial, tz, status }: { editId?: string; initia
     label: `${a.username ? `@${a.username}` : a.displayName ?? "account"} on ${PLATFORM_META[a.platform].name}`,
     postAsVideo: selected[a.id].postAsVideo,
     contentOverride: selected[a.id].override?.trim() ? selected[a.id].override : null,
+    collaborators: collaboratorsOf(a.id),
   }));
   const issues = validateForPublish({
     content,
@@ -158,7 +166,7 @@ function ComposerForm({ editId, initial, tz, status }: { editId?: string; initia
         return rest;
       }
       // YouTube can only publish videos, so "Post as video" starts on.
-      return { ...cur, [a.id]: { postAsVideo: a.platform === "youtube", override: null } };
+      return { ...cur, [a.id]: { postAsVideo: a.platform === "youtube", override: null, collaborators: "" } };
     });
   }
 
@@ -179,6 +187,7 @@ function ComposerForm({ editId, initial, tz, status }: { editId?: string; initia
         socialAccountId: id,
         postAsVideo: selected[id].postAsVideo,
         contentOverride: selected[id].override?.trim() ? selected[id].override : null,
+        collaborators: collaboratorsOf(id),
       })),
       mediaIds: media.map((m) => m.id),
       mode,
@@ -312,6 +321,27 @@ function ComposerForm({ editId, initial, tz, status }: { editId?: string; initia
                             aria-label="Post as video"
                           />
                         </label>
+                      )}
+
+                      {a.platform === "instagram" && (
+                        <div className="space-y-1.5">
+                          <label htmlFor={`collab-${a.id}`} className="block text-sm">
+                            Collaborators <span className="text-muted-foreground">(optional)</span>
+                          </label>
+                          <Input
+                            id={`collab-${a.id}`}
+                            value={sel.collaborators}
+                            onChange={(e) => setSelected((cur) => ({ ...cur, [a.id]: { ...cur[a.id], collaborators: e.target.value } }))}
+                            placeholder="@username, @another"
+                            autoComplete="off"
+                            spellCheck={false}
+                            aria-describedby={`collab-help-${a.id}`}
+                          />
+                          <p id={`collab-help-${a.id}`} className="text-muted-foreground text-xs">
+                            Up to {IG_MAX_COLLABORATORS} Instagram usernames, separated by commas. Each gets an invite and must accept it before the post
+                            shows on their profile. Not available for stories.
+                          </p>
+                        </div>
                       )}
 
                       {open ? (

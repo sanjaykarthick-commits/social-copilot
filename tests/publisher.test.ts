@@ -105,6 +105,16 @@ describe.skipIf(!hasDb)("publisher", () => {
       expect(publish.mock.calls[0][0].content).toBe("tailored for X");
     });
 
+    it("passes the target's collaborators to the adapter (none by default)", async () => {
+      const { targets } = await seedPost("t");
+      await getDb().update(postTargets).set({ collaborators: ["ben_k", "cara.co"] }).where(eq(postTargets.id, targets[0].id));
+      publish.mockResolvedValue({ platformPostId: "1" });
+      await publishTarget(targets[0].id);
+      await publishTarget(targets[1].id);
+      expect(publish.mock.calls[0][0].collaborators).toEqual(["ben_k", "cara.co"]);
+      expect(publish.mock.calls[1][0].collaborators).toEqual([]);
+    });
+
     it("records a permanent platform error on the target and does not throw", async () => {
       const { targets } = await seedPost();
       publish.mockRejectedValue(new PlatformError("Posting to X: You are not permitted to create a Tweet.", "api", false, 403));

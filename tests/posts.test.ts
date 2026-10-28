@@ -11,7 +11,7 @@ import { getDb } from "@/lib/db";
 import { mediaAssets, postTargets, posts, socialAccounts } from "@/lib/db/schema";
 import { createPost, deletePost, publishPostNow, replacePost, reschedulePost } from "@/lib/posts";
 import { getPostDTO, listPosts } from "@/lib/posts-query";
-import type { PostBody } from "@/lib/validation/posts";
+import { postBodySchema, type PostBody } from "@/lib/validation/posts";
 
 const body = (over: Partial<PostBody> & Pick<PostBody, "targets">): PostBody => ({
   content: "Hello world",
@@ -128,6 +128,19 @@ describe.skipIf(!hasDb)("post scheduling service", () => {
     it("rejects accounts that need reconnecting", async () => {
       await getDb().update(socialAccounts).set({ status: "expired" }).where(eq(socialAccounts.id, acct.id));
       await expect(createPost(actor, sched())).rejects.toMatchObject({ code: "VALIDATION", message: expect.stringContaining("reconnected") });
+    });
+    it("stores Instagram collaborators per target, normalized, and returns them for editing", async () => {
+      const ig = await makeAccount(user.id, "instagram", "asha.ig");
+      const parsed = postBodySchema.parse({ mode: "draft", content: "x", targets: [{ socialAccountId: ig.id, collaborators: ["@Ben_K", "cara.co"] }, { socialAccountId: acct.id }] });
+      const post = await createPost(actor, parsed);
+      const byAccount = Object.fromEntries(post.targets.map((t) => [t.socialAccountId, t.collaborators]));
+      expect(byAccount).toEqual({ [ig.id]: ["ben_k", "cara.co"], [acct.id]: [] });
+    });
+    it("rejects collaborators on a non-Instagram target", async () => {
+      await expect(createPost(actor, sched({ targets: [{ ...target(), collaborators: ["ben_k"] }] }))).rejects.toMatchObject({
+        code: "VALIDATION",
+        message: expect.stringContaining("only available on Instagram"),
+      });
     });
     it("a per-account text override is validated against that platform", async () => {
       await expect(createPost(actor, sched({ targets: [{ ...target(), contentOverride: "y".repeat(300) }] }))).rejects.toMatchObject({ code: "VALIDATION" });

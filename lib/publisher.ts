@@ -79,6 +79,7 @@ export async function publishTarget(targetId: string): Promise<TargetOutcome> {
       content: target.contentOverride ?? post.content,
       media: toPublishMedia(media),
       asVideo: target.postAsVideo,
+      collaborators: target.collaborators,
       state: target.publishState,
       saveState: async (state) => {
         await db.update(postTargets).set({ publishState: state, updatedAt: new Date() }).where(eq(postTargets.id, targetId));

@@ -15,6 +15,7 @@ process.env.TOKEN_ENCRYPTION_KEY ??= Buffer.alloc(32, 9).toString("base64");
 const { getDb } = await import("@/lib/db");
 const { commentReplies, comments, mediaAssets, postMetrics, postTargets, posts, subscriptions, users } = await import("@/lib/db/schema");
 const { saveConnectedAccount } = await import("@/lib/accounts");
+const { upsertConversation } = await import("@/lib/messages");
 const { upsertUser } = await import("@/lib/users");
 const { toInstant, fromInstant } = await import("@/lib/time");
 const { eq } = await import("drizzle-orm");
@@ -33,7 +34,7 @@ const ig = await saveConnectedAccount(user.id, "instagram", {
   ...tokens,
   refreshToken: null,
   expiresAt: new Date(Date.now() + 50 * 86_400_000),
-  scopes: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_insights",
+  scopes: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_insights,instagram_business_manage_messages",
   platformAccountId: "17841400000001",
   username: "karthick.builds",
   displayName: "Karthick Builds",
@@ -215,5 +216,21 @@ for (const [i, c] of demoComments.entries()) {
   }
 }
 
-console.log(`Seeded ${seeds.length} posts, 3 accounts and ${demoComments.length} comments for ${user.clerkId} (${TZ}).`);
+// Instagram DMs: one waiting inside the 24-hour window, one answered, one whose window has closed.
+const dm = (id: string, fromMe: boolean, h: number, text: string) => ({ platformMessageId: id, fromMe, text, sentAt: new Date(Date.now() - h * 3_600_000) });
+const demoThreads = [
+  { id: "t1", handle: "meera.designs", messages: [dm("t1a", false, 3.2, "Hi! Loved the desk setup post."), dm("t1b", false, 3, "Where did you get that lamp? 😍")] },
+  { id: "t2", handle: "arun_codes", messages: [dm("t2a", false, 9, "Do you do collabs with small creators?"), dm("t2b", true, 8.5, "Yes! Send me a few of your recent posts."), dm("t2c", false, 8, "")] },
+  { id: "t3", handle: "kavya.reads", messages: [dm("t3a", false, 52, "Can you share the keyboard shortcuts as a PDF?")] },
+];
+for (const t of demoThreads) {
+  await upsertConversation(user.id, ig.id, "instagram", {
+    platformConversationId: t.id,
+    participant: { id: `IGSID-${t.id}`, handle: t.handle, name: null, imageUrl: null },
+    updatedAt: t.messages.at(-1)!.sentAt,
+    messages: t.messages,
+  });
+}
+
+console.log(`Seeded ${seeds.length} posts, 3 accounts, ${demoComments.length} comments and ${demoThreads.length} Instagram conversations for ${user.clerkId} (${TZ}).`);
 process.exit(0);
